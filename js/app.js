@@ -622,7 +622,7 @@ function memberLine(node) {
 }
 
 function mapGraphify(data) {
-  if (!isPlainObject(data.graph) || data.graph.schema_version !== 1) return { error: COPY.badNode };
+  if (!isPlainObject(data.graph) || (data.graph.schema_version !== 1 && data.graph.schema_version !== '1')) return { error: COPY.badNode };
   if (Object.prototype.hasOwnProperty.call(data.graph, 'graphify_version') && data.graph.graphify_version != null && typeof data.graph.graphify_version !== 'string') {
     return { error: COPY.badNode };
   }
