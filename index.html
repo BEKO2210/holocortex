@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Copyright 2026 Belkis Aslani -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>holocortex</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
+<script src="https://cdn.tailwindcss.com/3.4.17" data-dep="tailwind"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        space: '#030712',
+        navy: '#071321',
+        text: '#E8F2FA',
+        muted: '#A9BDCE',
+        cyan: '#39E7FF',
+        magenta: '#F071DC',
+        violet: '#A89CFF',
+        mint: '#75E7BA',
+        amber: '#F5C16C',
+        danger: '#FF819B'
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        display: ['Space Grotesk', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace']
+      },
+      boxShadow: {
+        glow: '0 0 16px rgba(57,231,255,.20), 0 0 40px rgba(57,231,255,.08)',
+        'glow-magenta': '0 0 18px rgba(240,113,220,.20)',
+        'glow-amber': '0 0 16px rgba(245,193,108,.20)',
+        panel: '0 18px 50px rgba(0,0,0,.45), 0 0 16px rgba(57,231,255,.20), 0 0 40px rgba(57,231,255,.08)'
+      }
+    }
+  }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/lib/marked.umd.js" data-dep="marked"></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js" data-dep="lucide"></script>
+</head>
+<body>
+  <div id="graph" role="application" aria-label="Interactive 3D node network"></div>
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div class="fog" aria-hidden="true"></div>
+  <div id="sweep" class="sweep" hidden aria-hidden="true"></div>
+
+  <header class="topbar glass corners">
+    <div class="brand">
+      <div class="wordmark">holocortex</div>
+      <div class="tagline">Local thought network</div>
+    </div>
+    <button type="button" id="search-toggle" class="icon-btn search-toggle" aria-expanded="false" aria-controls="search-block">
+      <span class="btn-icon" aria-hidden="true"><i data-lucide="search"></i></span>
+      <span class="btn-label">Search</span>
+    </button>
+    <div class="search-block" id="search-block">
+      <label class="label" for="search">Search</label>
+      <div class="search-field">
+        <input id="search" class="field" type="text" placeholder="Search titles, tags, and notes…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="results-list" aria-autocomplete="list">
+        <button type="button" id="clear-search" class="icon-btn clear-btn" title="Clear search" aria-label="Clear search" hidden><i data-lucide="x"></i></button>
+      </div>
+      <div id="results" class="results glass corners" hidden>
+        <div class="results-head">
+          <span>Search results</span>
+          <span id="results-count"></span>
+        </div>
+        <ul id="results-list" role="listbox"></ul>
+        <p id="results-empty" class="help" hidden>No matching nodes</p>
+      </div>
+    </div>
+    <div class="actions" id="action-menu">
+      <button type="button" id="new-node" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="plus"></i></span><span class="btn-label">New node</span></button>
+      <button type="button" id="import-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="upload"></i></span><span class="btn-label">Import</span></button>
+      <button type="button" id="export-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="download"></i></span><span class="btn-label">Export</span></button>
+      <button type="button" id="reset-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="rotate-ccw"></i></span><span class="btn-label">Reset</span></button>
+      <input id="file-input" type="file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+
+  <aside class="legend glass corners" aria-label="Node types">
+    <div class="label">Node types</div>
+    <ul>
+      <li class="type-thought"><i data-lucide="brain"></i><span>Thought</span></li>
+      <li class="type-task"><i data-lucide="circle-check"></i><span>Task</span></li>
+      <li class="type-link"><i data-lucide="link"></i><span>Link</span></li>
+      <li class="type-snippet"><i data-lucide="code-2"></i><span>Snippet</span></li>
+    </ul>
+    <p class="help">Drag to orbit · Scroll to zoom · Click to edit</p>
+  </aside>
+
+  <section id="empty" class="empty glass corners" hidden>
+    <h2>Your network is empty</h2>
+    <p>Add a thought, task, link, or snippet to begin.</p>
+    <button type="button" id="empty-new" class="btn"><span class="btn-label">New node</span></button>
+  </section>
+
+  <div id="banner" class="banner glass" hidden role="status"></div>
+  <div id="loading" class="loading glass">Loading network…</div>
+
+  <aside id="hud" class="hud glass corners" inert aria-hidden="true">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="hud-body">
+    <div class="hud-scroll">
+      <div class="hud-head">
+        <div id="badge" class="badge type-thought"><i data-lucide="brain"></i><span>Thought</span></div>
+        <div class="title-wrap">
+          <label class="label" for="title">Title</label>
+          <input id="title" class="field" type="text" maxlength="200" placeholder="Give this node a title" autocomplete="off">
+        </div>
+        <button type="button" id="close-hud" class="icon-btn" title="Close" aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="stack">
+        <label class="label" for="type">Type</label>
+        <select id="type" class="select">
+          <option value="thought">Thought</option>
+          <option value="task">Task</option>
+          <option value="link">Link</option>
+          <option value="snippet">Snippet</option>
+        </select>
+      </div>
+      <div class="stack">
+        <label class="label" for="tag-input">Tags</label>
+        <div id="chips" class="chips"></div>
+        <input id="tag-input" class="field" type="text" placeholder="Add tags, separated by commas" autocomplete="off">
+        <p class="help">Shared tags create connections</p>
+      </div>
+      <div id="status-row" class="row" hidden>
+        <span class="label">Status</span>
+        <div class="seg">
+          <button type="button" id="status-open" class="btn" aria-pressed="true">Open</button>
+          <button type="button" id="status-done" class="btn" aria-pressed="false">Done</button>
+        </div>
+      </div>
+      <div id="url-row" class="row" hidden>
+        <label class="label" for="url">URL</label>
+        <input id="url" class="field" type="text" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+        <button type="button" id="open-link" class="btn">Open link</button>
+      </div>
+      <div class="format" id="format-bar">
+        <button type="button" class="icon-btn" data-format="bold" title="Bold" aria-label="Bold"><i data-lucide="bold"></i></button>
+        <button type="button" class="icon-btn" data-format="italic" title="Italic" aria-label="Italic"><i data-lucide="italic"></i></button>
+        <button type="button" class="icon-btn" data-format="heading" title="Heading" aria-label="Heading"><i data-lucide="heading"></i></button>
+        <button type="button" class="icon-btn" data-format="link" title="Insert link" aria-label="Insert link"><i data-lucide="link"></i></button>
+        <button type="button" class="icon-btn" data-format="list" title="List" aria-label="List"><i data-lucide="list"></i></button>
+        <button type="button" class="icon-btn" data-format="code" title="Code" aria-label="Code"><i data-lucide="code"></i></button>
+        <button type="button" class="icon-btn" data-format="quote" title="Quote" aria-label="Quote"><i data-lucide="quote"></i></button>
+      </div>
+    </div>
+    <div class="split">
+      <label class="label" for="body">Markdown</label>
+      <textarea id="body" class="editor" placeholder="Write a note in Markdown…" spellcheck="false" autocomplete="off"></textarea>
+      <div class="label preview-label">Live preview</div>
+      <p class="preview-warn">Preview is isolated. Open links using the URL field.</p>
+      <div class="preview-frame">
+        <iframe id="preview" sandbox="" referrerpolicy="no-referrer" title="Live preview"></iframe>
+      </div>
+    </div>
+    </div>
+    <footer class="hud-foot">
+      <button type="button" id="save-btn" class="btn">Save</button>
+      <span id="save-state" class="save-state" role="status"></span>
+      <button type="button" id="delete-btn" class="btn delete">Delete</button>
+    </footer>
+  </aside>
+
+  <div id="tooltip" class="tooltip glass" hidden>
+    <strong id="tip-title"></strong>
+    <span id="tip-status" hidden></span>
+    <span id="tip-tags" hidden></span>
+  </div>
+
+  <div id="toast" class="toast glass" role="status" aria-live="polite" hidden></div>
+
+  <div id="dialog-root" class="dialog-root" hidden>
+    <div class="dialog glass corners" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-describedby="dlg-text">
+      <h2 id="dlg-title"></h2>
+      <p id="dlg-text"></p>
+      <div class="dialog-actions">
+        <button type="button" id="dlg-cancel" class="btn">Cancel</button>
+        <button type="button" id="dlg-ok" class="btn"></button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  window.__hcDepFailed = false;
+  document.querySelectorAll('script[data-dep]').forEach(function (script) {
+    script.addEventListener('error', function () { window.__hcDepFailed = true; });
+  });
+</script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
