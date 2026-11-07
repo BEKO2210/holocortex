@@ -55,7 +55,7 @@ tailwind.config = {
       <div class="wordmark">holocortex</div>
       <div class="tagline">Local thought network</div>
     </div>
-    <button type="button" id="search-toggle" class="icon-btn search-toggle" aria-expanded="false" aria-controls="search-block">
+    <button type="button" id="search-toggle" class="icon-btn search-toggle" title="Search" aria-label="Search" aria-expanded="false" aria-controls="search-block">
       <span class="btn-icon" aria-hidden="true"><i data-lucide="search"></i></span>
       <span class="btn-label">Search</span>
     </button>
@@ -75,10 +75,10 @@ tailwind.config = {
       </div>
     </div>
     <div class="actions" id="action-menu">
-      <button type="button" id="new-node" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="plus"></i></span><span class="btn-label">New node</span></button>
-      <button type="button" id="import-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="upload"></i></span><span class="btn-label">Import</span></button>
-      <button type="button" id="export-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="download"></i></span><span class="btn-label">Export</span></button>
-      <button type="button" id="reset-btn" class="btn"><span class="btn-icon" aria-hidden="true"><i data-lucide="rotate-ccw"></i></span><span class="btn-label">Reset</span></button>
+      <button type="button" id="new-node" class="btn" title="New node" aria-label="New node"><span class="btn-icon" aria-hidden="true"><i data-lucide="plus"></i></span><span class="btn-label">New node</span></button>
+      <button type="button" id="import-btn" class="btn" title="Import" aria-label="Import"><span class="btn-icon" aria-hidden="true"><i data-lucide="upload"></i></span><span class="btn-label">Import</span></button>
+      <button type="button" id="export-btn" class="btn" title="Export" aria-label="Export"><span class="btn-icon" aria-hidden="true"><i data-lucide="download"></i></span><span class="btn-label">Export</span></button>
+      <button type="button" id="reset-btn" class="btn" title="Reset" aria-label="Reset"><span class="btn-icon" aria-hidden="true"><i data-lucide="rotate-ccw"></i></span><span class="btn-label">Reset</span></button>
       <input id="file-input" type="file" accept="application/json,.json" hidden>
     </div>
   </header>
@@ -181,6 +181,7 @@ tailwind.config = {
     <div class="dialog glass corners" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-describedby="dlg-text">
       <h2 id="dlg-title"></h2>
       <p id="dlg-text"></p>
+      <p id="dlg-count" hidden></p>
       <div class="dialog-actions">
         <button type="button" id="dlg-cancel" class="btn">Cancel</button>
         <button type="button" id="dlg-ok" class="btn"></button>

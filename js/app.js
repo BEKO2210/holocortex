@@ -92,6 +92,7 @@ const dlgTitle = $('dlg-title');
 const dlgText = $('dlg-text');
 const dlgCancel = $('dlg-cancel');
 const dlgOk = $('dlg-ok');
+const dlgCount = $('dlg-count');
 const fileEl = $('file-input');
 const previewEl = $('preview');
 const graphEl = $('graph');
@@ -127,6 +128,8 @@ const state = {
 };
 
 const objectMap = new Map();
+const graphNodes = new Map();
+const layoutSeed = new Map();
 const geoCache = new Map();
 const iconCache = new Map();
 
@@ -193,8 +196,30 @@ function parseJson(text) {
 
 function isIsoDate(value) {
   if (typeof value !== 'string') return false;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return false;
-  return Number.isFinite(Date.parse(value));
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < 1 || day > lastDay) return false;
+  if (match[7] !== 'Z') {
+    const tzHour = Number(match[8]);
+    const tzMinute = Number(match[9]);
+    if (tzHour > 23 || tzMinute > 59) return false;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return false;
+  if (match[7] === 'Z') {
+    const date = new Date(parsed);
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return false;
+    if (date.getUTCHours() !== hour || date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) return false;
+  }
+  return true;
 }
 
 function isHttpUrl(value) {
@@ -249,8 +274,8 @@ function normalizeNode(raw) {
     title: raw.title,
     body: raw.body,
     tags: normalizeTags(raw.tags),
-    createdAt: new Date(raw.createdAt).toISOString(),
-    updatedAt: new Date(raw.updatedAt).toISOString()
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt
   };
   if (raw.type === 'task') {
     if (raw.status !== 'open' && raw.status !== 'done') return null;
@@ -265,6 +290,7 @@ function normalizeNode(raw) {
 
 function mapNative(data) {
   if (!isPlainObject(data) || data.version !== 1) return { error: COPY.badVersion };
+  if (data.initialized !== true) return { error: COPY.badNode };
   if (!Array.isArray(data.nodes)) return { error: COPY.badNode };
   const hasConnect = Object.prototype.hasOwnProperty.call(data, 'connectBy');
   const connectBy = hasConnect ? data.connectBy : undefined;
@@ -394,13 +420,15 @@ function buildDemo() {
       body: row[2],
       tags: row[3],
       createdAt: now,
-      updatedAt: now,
-      x: positions[index][0],
-      y: positions[index][1],
-      z: positions[index][2]
+      updatedAt: now
     };
     if (row[0] === 'task') node.status = row[4];
     if (row[0] === 'link') node.url = row[5];
+    layoutSeed.set(node.id, {
+      x: positions[index][0],
+      y: positions[index][1],
+      z: positions[index][2]
+    });
     return node;
   });
   return { version: 1, initialized: true, nodes };
@@ -534,10 +562,41 @@ function isGraphify(data) {
   ));
 }
 
-function rawGraphifyLinks(data) {
+function optionalString(node, key) {
+  if (!Object.prototype.hasOwnProperty.call(node, key) || node[key] == null) return true;
+  return typeof node[key] === 'string';
+}
+
+function validFlag(value) {
+  if (value === true || value === false) return true;
+  if (typeof value !== 'string') return false;
+  const text = value.trim().toLowerCase();
+  return text === 'true' || text === 'false';
+}
+
+function validCommunity(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'string') return false;
+  return /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(value.trim());
+}
+
+function validGraphifyNode(node) {
+  if (!isPlainObject(node)) return false;
+  if (typeof node.id !== 'string' || node.id.trim() === '') return false;
+  if (typeof node.label !== 'string') return false;
+  if (!optionalString(node, 'source_file') || !optionalString(node, 'source_location')) return false;
+  if (!optionalString(node, 'file_type') || !optionalString(node, 'community_name')) return false;
+  if (!optionalString(node, 'norm_label') || !optionalString(node, '_origin')) return false;
+  if (Object.prototype.hasOwnProperty.call(node, 'community') && node.community != null && !validCommunity(node.community)) return false;
+  if (Object.prototype.hasOwnProperty.call(node, '_callable') && node._callable != null && !validFlag(node._callable)) return false;
+  if (Object.prototype.hasOwnProperty.call(node, '_callable_class') && node._callable_class != null && !validFlag(node._callable_class)) return false;
+  return true;
+}
+
+function graphifyEdgeList(data) {
   if (Array.isArray(data.links)) return data.links;
   if (Array.isArray(data.edges)) return data.edges;
-  return [];
+  return null;
 }
 
 function sourceBits(node) {
@@ -563,9 +622,22 @@ function memberLine(node) {
 }
 
 function mapGraphify(data) {
+  if (!isPlainObject(data.graph) || data.graph.schema_version !== 1) return { error: COPY.badNode };
+  if (Object.prototype.hasOwnProperty.call(data.graph, 'graphify_version') && data.graph.graphify_version != null && typeof data.graph.graphify_version !== 'string') {
+    return { error: COPY.badNode };
+  }
   if (!Array.isArray(data.nodes) || data.nodes.length === 0) return { error: COPY.badNode };
+  const links = graphifyEdgeList(data);
+  if (!links) return { error: COPY.badNode };
+  for (const node of data.nodes) {
+    if (!validGraphifyNode(node)) return { error: COPY.badNode };
+  }
+  for (const link of links) {
+    if (!isPlainObject(link) || typeof link.source !== 'string' || typeof link.target !== 'string') {
+      return { error: COPY.badNode };
+    }
+  }
   const now = new Date().toISOString();
-  const links = rawGraphifyLinks(data);
   if (data.nodes.length > 800) return mapCommunities(data.nodes, links, now);
   return mapSymbols(data.nodes, links, now);
 }
@@ -575,8 +647,8 @@ function mapSymbols(rawNodes, links, now) {
   const idMap = new Map();
   const seen = new Set();
   for (const raw of rawNodes) {
-    if (!isPlainObject(raw) || raw.id == null) return { error: COPY.badNode };
-    const original = String(raw.id);
+    if (!validGraphifyNode(raw)) return { error: COPY.badNode };
+    const original = raw.id;
     if (seen.has(original)) return { error: COPY.badNode };
     seen.add(original);
     const id = uuidv5('graphify-node:' + original);
@@ -598,8 +670,8 @@ function mapSymbols(rawNodes, links, now) {
   const edges = [];
   const pairs = new Set();
   for (const link of links) {
-    if (!isPlainObject(link)) continue;
-    pushPair(edges, pairs, idMap.get(String(link.source)), idMap.get(String(link.target)));
+    if (!isPlainObject(link)) return { error: COPY.badNode };
+    pushPair(edges, pairs, idMap.get(link.source), idMap.get(link.target));
   }
   return { doc: { version: 1, initialized: true, connectBy: 'edges', nodes, edges } };
 }
@@ -608,8 +680,8 @@ function mapCommunities(rawNodes, links, now) {
   const groups = new Map();
   const nodeCommunity = new Map();
   for (const raw of rawNodes) {
-    if (!isPlainObject(raw) || raw.id == null) return { error: COPY.badNode };
-    const original = String(raw.id);
+    if (!validGraphifyNode(raw)) return { error: COPY.badNode };
+    const original = raw.id;
     if (nodeCommunity.has(original)) return { error: COPY.badNode };
     const key = communityKey(raw.community);
     nodeCommunity.set(original, key);
@@ -638,9 +710,9 @@ function mapCommunities(rawNodes, links, now) {
   const edges = [];
   const pairs = new Set();
   for (const link of links) {
-    if (!isPlainObject(link)) continue;
-    const left = communityUuid.get(nodeCommunity.get(String(link.source)));
-    const right = communityUuid.get(nodeCommunity.get(String(link.target)));
+    if (!isPlainObject(link)) return { error: COPY.badNode };
+    const left = communityUuid.get(nodeCommunity.get(link.source));
+    const right = communityUuid.get(nodeCommunity.get(link.target));
     pushPair(edges, pairs, left, right);
   }
   return { doc: { version: 1, initialized: true, connectBy: 'edges', nodes, edges } };
@@ -954,12 +1026,39 @@ function paintNodes() {
   });
 }
 
+function graphRecord(node) {
+  let record = graphNodes.get(node.id);
+  if (!record) {
+    record = { id: node.id };
+    const seed = layoutSeed.get(node.id);
+    if (seed) {
+      record.x = seed.x;
+      record.y = seed.y;
+      record.z = seed.z;
+    }
+    layoutSeed.delete(node.id);
+    graphNodes.set(node.id, record);
+  }
+  record.type = node.type;
+  record.title = node.title;
+  record.body = node.body;
+  record.tags = node.tags.slice();
+  if (node.type === 'task') record.status = node.status === 'done' ? 'done' : 'open';
+  else delete record.status;
+  if (node.type === 'link' && node.url) record.url = node.url;
+  else delete record.url;
+  return record;
+}
+
 function syncGraph() {
   const graph = state.graph;
   if (!graph) return;
-  graph.graphData({ nodes: state.doc.nodes, links: buildLinks(state.doc) });
-  paintLinks();
   const live = new Set(state.doc.nodes.map((node) => node.id));
+  for (const id of [...graphNodes.keys()]) {
+    if (!live.has(id)) graphNodes.delete(id);
+  }
+  graph.graphData({ nodes: state.doc.nodes.map(graphRecord), links: buildLinks(state.doc) });
+  paintLinks();
   for (const [id, group] of objectMap) {
     if (!live.has(id)) {
       disposeObject(group);
@@ -1016,10 +1115,12 @@ function applyViewOffset(open) {
 
 function focusNode(node, ms = state.reduced ? 0 : 600) {
   const graph = state.graph;
-  if (!graph || !node || !Number.isFinite(node.x)) return;
-  const dx = node.x || 0;
-  const dy = node.y || 0;
-  const dz = node.z || 0;
+  const placed = node && graphNodes.get(node.id);
+  const point = placed && Number.isFinite(placed.x) ? placed : node;
+  if (!graph || !point || !Number.isFinite(point.x)) return;
+  const dx = point.x || 0;
+  const dy = point.y || 0;
+  const dz = point.z || 0;
   const dist = Math.hypot(dx, dy, dz);
   let cam = dist < 0.001 ? { x: 0, y: 0, z: 180 } : {
     x: dx * ((dist + 170) / dist),
@@ -1064,34 +1165,38 @@ function focusNode(node, ms = state.reduced ? 0 : 600) {
 }
 
 function placeNode(node) {
-  const graph = state.graph;
-  if (!graph) {
-    node.x = (Math.random() - 0.5) * 80;
-    node.y = (Math.random() - 0.5) * 40;
-    node.z = (Math.random() - 0.5) * 80;
-    return;
+  let x;
+  let y;
+  let z;
+  if (!state.graph) {
+    x = (Math.random() - 0.5) * 80;
+    y = (Math.random() - 0.5) * 40;
+    z = (Math.random() - 0.5) * 80;
+  } else {
+    const camera = state.graph.camera();
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const pos = camera.position.clone().add(dir.multiplyScalar(150));
+    x = pos.x + (Math.random() - 0.5) * 20;
+    y = pos.y + (Math.random() - 0.5) * 20;
+    z = pos.z + (Math.random() - 0.5) * 20;
   }
-  const camera = graph.camera();
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  const pos = camera.position.clone().add(dir.multiplyScalar(150));
-  node.x = pos.x + (Math.random() - 0.5) * 20;
-  node.y = pos.y + (Math.random() - 0.5) * 20;
-  node.z = pos.z + (Math.random() - 0.5) * 20;
+  layoutSeed.set(node.id, { x, y, z });
 }
 
 function showTooltip(node) {
-  tipTitle.textContent = node.title.trim() || COPY.untitled;
-  if (node.type === 'task') {
+  const current = getNode(node.id) || node;
+  tipTitle.textContent = (current.title || '').trim() || COPY.untitled;
+  if (current.type === 'task') {
     tipStatus.hidden = false;
-    tipStatus.textContent = node.status === 'done' ? COPY.done : COPY.open;
+    tipStatus.textContent = current.status === 'done' ? COPY.done : COPY.open;
   } else {
     tipStatus.hidden = true;
     tipStatus.textContent = '';
   }
-  if (node.tags.length) {
+  if (current.tags && current.tags.length) {
     tipTags.hidden = false;
-    tipTags.textContent = node.tags.join(', ');
+    tipTags.textContent = current.tags.join(', ');
   } else {
     tipTags.hidden = true;
     tipTags.textContent = '';
@@ -1427,6 +1532,7 @@ function scheduleSave() {
 
 function fillForm(node) {
   titleEl.value = node.title;
+  titleEl.scrollLeft = 0;
   bodyEl.value = node.body;
   typeEl.value = node.type;
   state.tags = node.tags.slice();
@@ -1488,7 +1594,7 @@ function closeHud() {
 
 function selectNode(id, trigger, pulse) {
   if (state.dialog) return;
-  if (state.hudOpen && state.selectedId && state.selectedId !== id) flushSave(false);
+  if (state.hudOpen && state.selectedId) flushSave(false);
   const node = getNode(id);
   if (!node) return;
   state.selectedId = id;
@@ -1520,6 +1626,7 @@ function createNode(trigger) {
   state.doc.nodes.push(node);
   const ok = persist(state.doc);
   syncGraph();
+  if (state.query.trim()) runSearch();
   selectNode(node.id, trigger || $('new-node'), true);
   if (!ok) {
     setSaveStatus(COPY.saveFailed, true);
@@ -1812,6 +1919,13 @@ function openDialog(kind) {
   state.dialogTrigger = document.activeElement;
   dlgTitle.textContent = copy.title;
   dlgText.textContent = copy.text;
+  if (kind === 'import' && state.pendingImport) {
+    dlgCount.hidden = false;
+    dlgCount.textContent = state.pendingImport.nodes.length + ' nodes';
+  } else {
+    dlgCount.hidden = true;
+    dlgCount.textContent = '';
+  }
   dlgOk.textContent = copy.ok;
   dlgOk.classList.toggle('is-danger', kind !== 'import');
   dialogRoot.hidden = false;
@@ -1981,8 +2095,8 @@ function bindUi() {
   bodyEl.addEventListener('blur', () => flushSave(false));
   urlEl.addEventListener('blur', () => flushSave(false));
   tagInput.addEventListener('input', () => {
-    if (!tagInput.value.includes(',')) return;
-    commitTagBuffer(true);
+    if (tagInput.value.includes(',')) commitTagBuffer(false);
+    scheduleSave();
   });
   tagInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {

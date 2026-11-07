@@ -395,6 +395,15 @@
   .empty p,
   .dialog p { margin: 0 0 14px; color: var(--muted); }
 
+  #dlg-count {
+    margin-top: -6px;
+    color: var(--text);
+    font-family: "Space Grotesk", system-ui, sans-serif;
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 26px;
+  }
+
   .banner,
   .loading,
   .toast {
@@ -455,6 +464,8 @@
     align-items: flex-end;
     gap: 8px;
   }
+
+  .title-wrap .field { width: 100%; }
 
   .badge {
     display: inline-flex;
@@ -634,6 +645,11 @@
       border-radius: 0 0 12px 12px;
       align-items: center;
     }
+
+    .hud-head { flex-wrap: wrap; align-items: center; }
+    .badge { max-width: calc(100% - 52px); }
+    #close-hud { margin-left: auto; }
+    .title-wrap { flex: 1 1 100%; order: 3; min-width: 0; }
 
     .brand { width: auto; flex: 0 1 auto; min-width: 0; }
     .wordmark {
