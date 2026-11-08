@@ -7,6 +7,8 @@ try { delete window.__THREE__; } catch (err) { window.__THREE__ = undefined; }
 const COPY = {
   saving: 'Saving\u2026',
   saved: 'Saved locally',
+  savedAt: 'Saved',
+  savedButton: 'Saved',
   saveFailed: 'Save failed. Export a backup.',
   created: 'Node created',
   deleted: 'Node deleted',
@@ -154,6 +156,7 @@ const state = {
   previewTimer: 0,
   searchTimer: 0,
   toastTimer: 0,
+  savedTimer: 0,
   urlWarned: false,
   lastSaveOk: true,
   scanMemory: false
@@ -200,9 +203,49 @@ function toast(message) {
   state.toastTimer = window.setTimeout(() => { toastEl.hidden = true; }, 2000);
 }
 
-function setSaveStatus(message, failed) {
+function setSaveStatus(message, failed, kind) {
   saveStateEl.textContent = message;
   saveStateEl.classList.toggle('is-error', Boolean(failed));
+  saveStateEl.classList.toggle('is-saving', kind === 'saving');
+  saveStateEl.classList.remove('is-fresh');
+  if (kind === 'fresh') {
+    void saveStateEl.offsetWidth;
+    saveStateEl.classList.add('is-fresh');
+  }
+}
+
+function clockTime() {
+  try {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch (err) {
+    return '';
+  }
+}
+
+/* Visible proof that Save did something: the button turns into a check for a
+   moment, the status shows the time, and phones get a short tick. */
+function confirmSave(ok) {
+  const button = $('save-btn');
+  const label = button && button.querySelector('.save-label');
+  window.clearTimeout(state.savedTimer);
+  if (!button || !label) return;
+  button.classList.remove('is-saved', 'is-failed');
+  void button.offsetWidth;
+  if (ok) {
+    button.classList.add('is-saved');
+    label.textContent = COPY.savedButton;
+    const time = clockTime();
+    setSaveStatus(time ? COPY.savedAt + ' ' + time : COPY.saved, false, 'fresh');
+    if (isCoarse() && typeof navigator.vibrate === 'function') {
+      try { navigator.vibrate(12); } catch (err) { /* vibration is optional */ }
+    }
+  } else {
+    button.classList.add('is-failed');
+  }
+  state.savedTimer = window.setTimeout(() => {
+    button.classList.remove('is-saved', 'is-failed');
+    label.textContent = 'Save';
+  }, 1600);
 }
 
 function paintIcons() {
@@ -1791,9 +1834,9 @@ function applyDraft(node, draft, announceUrl) {
 
 function flushSave(explicit) {
   window.clearTimeout(state.saveTimer);
-  if (!state.hudOpen || !state.selectedId) return;
+  if (!state.hudOpen || !state.selectedId) return null;
   const node = getNode(state.selectedId);
-  if (!node) return;
+  if (!node) return null;
   commitTagBuffer(false);
   const tagsBefore = node.tags.join('\u0000');
   const changed = applyDraft(node, readDraft(), true);
@@ -1805,16 +1848,28 @@ function flushSave(explicit) {
   }
   if (changed || explicit) {
     const ok = persist(state.doc);
-    setSaveStatus(ok ? COPY.saved : COPY.saveFailed, !ok);
+    if (ok) {
+      const time = clockTime();
+      setSaveStatus(time ? COPY.savedAt + ' ' + time : COPY.saved, false, changed ? 'fresh' : '');
+    } else {
+      setSaveStatus(COPY.saveFailed, true);
+    }
     if (!ok) toast(COPY.saveFailed);
     updateEmpty();
-  } else {
-    setSaveStatus(state.storageState === 'ok' ? COPY.saved : COPY.saveFailed, state.storageState !== 'ok');
+    return ok;
   }
+  setSaveStatus(state.storageState === 'ok' ? COPY.saved : COPY.saveFailed, state.storageState !== 'ok');
+  return state.storageState === 'ok';
+}
+
+function saveNow() {
+  if (!state.hudOpen) return;
+  const ok = flushSave(true);
+  if (ok !== null) confirmSave(ok);
 }
 
 function scheduleSave() {
-  setSaveStatus(COPY.saving, false);
+  setSaveStatus(COPY.saving, false, 'saving');
   window.clearTimeout(state.saveTimer);
   state.saveTimer = window.setTimeout(() => flushSave(false), 300);
 }
@@ -2588,7 +2643,7 @@ function onKeyDown(event) {
   }
   if (meta && (event.key === 's' || event.key === 'S')) {
     event.preventDefault();
-    if (state.hudOpen) flushSave(true);
+    saveNow();
     return;
   }
   if (document.activeElement === searchEl && !resultsEl.hidden) {
@@ -2693,7 +2748,7 @@ function bindUi() {
   window.addEventListener('resize', syncViewport);
   syncViewport();
   initLegend();
-  $('save-btn').addEventListener('click', () => flushSave(true));
+  $('save-btn').addEventListener('click', saveNow);
   $('format-toggle').addEventListener('click', () => {
     const toggle = $('format-toggle');
     setFormatting(toggle.getAttribute('aria-pressed') !== 'true');

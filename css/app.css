@@ -663,6 +663,55 @@
   }
 
   .save-state.is-error { color: var(--danger); }
+  .save-state.is-saving { color: var(--muted); }
+  .save-state.is-fresh { color: var(--mint); animation: save-flash 1.6s ease-out 1; }
+
+  @keyframes save-flash {
+    0% { opacity: 0; transform: translateY(2px); }
+    15% { opacity: 1; transform: none; }
+    100% { opacity: 1; }
+  }
+
+  .save-btn {
+    min-width: 96px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, box-shadow 160ms ease-out;
+  }
+
+  .save-icon { display: none; }
+  .save-icon svg.lucide { width: 16px; height: 16px; }
+
+  .save-btn.is-saved {
+    color: var(--mint);
+    border-color: var(--mint);
+    background: rgba(117, 231, 186, .16);
+    box-shadow: 0 0 16px rgba(117, 231, 186, .28);
+    animation: save-pop 280ms ease-out 1;
+  }
+
+  .save-btn.is-saved .save-icon { display: inline-grid; place-items: center; }
+
+  .save-btn.is-failed {
+    color: var(--danger);
+    border-color: rgba(255, 129, 155, .55);
+    background: rgba(255, 129, 155, .12);
+    animation: save-shake 320ms ease-in-out 1;
+  }
+
+  @keyframes save-pop {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.06); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes save-shake {
+    0%, 100% { transform: none; }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
+  }
 
   .hud-foot .delete { margin-left: auto; color: var(--danger); border-color: rgba(255, 129, 155, .55); background: rgba(255, 129, 155, .08); }
 
@@ -773,7 +822,11 @@
     .sweep { animation: none; display: none; }
     .hud,
     .legend,
-    .legend-chevron { transition: none; }
+    .legend-chevron,
+    .save-btn { transition: none; }
+    .save-btn.is-saved,
+    .save-btn.is-failed,
+    .save-state.is-fresh { animation: none; }
   }
 
   @media (max-width: 899px) {
