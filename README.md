@@ -33,6 +33,8 @@ Layout is mobile-first. Under about 900px the top bar keeps the wordmark, a sear
 - While you type in the sheet on a touch device, it fills the visible area above the on-screen keyboard. Text fields use a 16px font so iOS Safari does not zoom the page on focus.
 - Picking a search result closes the result list and the keyboard. Focus the search field to see the list again.
 - A new node is placed next to the existing network and held in place while its sheet is open.
+- Save, and Ctrl or Cmd+S, turn the button into a mint check for a moment and show the time of the save next to it. On a phone with vibration support there is also a short tick. A failed save shakes the button red and shows an error. Edits are also saved automatically while you type.
+- Search results and the peek show the note as plain text. Markdown symbols are left out, and line breaks become a middle dot.
 
 Safe areas use `viewport-fit=cover` and `env(safe-area-inset-*)`. The viewport sets `interactive-widget=resizes-content`, and the sheet also follows `visualViewport`, so it stays above the keyboard.
 

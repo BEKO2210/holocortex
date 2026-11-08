@@ -1882,7 +1882,7 @@ function scheduleSave() {
   state.saveTimer = window.setTimeout(() => flushSave(false), 300);
 }
 
-function plainExcerpt(markdown) {
+function plainExcerpt(markdown, max = 400) {
   return String(markdown || '')
     .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
@@ -1890,9 +1890,11 @@ function plainExcerpt(markdown) {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+\.\s+)/gm, '')
     .replace(/(\*\*|~~|\*)(\S[\s\S]*?)\1/g, '$2')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 400);
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' \u00b7 ')
+    .slice(0, max);
 }
 
 function renderPeek(node) {
@@ -2405,7 +2407,7 @@ function countLabel(count, singular, plural) {
 }
 
 function excerpt(body, query) {
-  const plain = body.replace(/\s+/g, ' ').trim();
+  const plain = plainExcerpt(body, Infinity);
   if (!plain) return '';
   const at = plain.toLowerCase().indexOf(query);
   if (at < 0) return plain.slice(0, 90);
