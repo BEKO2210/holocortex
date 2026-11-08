@@ -8,7 +8,6 @@ const COPY = {
   saving: 'Saving\u2026',
   saved: 'Saved locally',
   savedAt: 'Saved',
-  savedButton: 'Saved',
   saveFailed: 'Save failed. Export a backup.',
   created: 'Node created',
   deleted: 'Node deleted',
@@ -31,6 +30,9 @@ const COPY = {
   done: 'Done',
   markDone: 'Mark done',
   reopen: 'Reopen',
+  taskDone: 'Task done',
+  taskReopened: 'Task reopened',
+  save: 'Save',
   expandSheet: 'Expand sheet',
   shrinkSheet: 'Shrink sheet',
   editSheet: 'Edit node'
@@ -60,6 +62,8 @@ const TYPE = {
 const STORAGE_KEY = 'holocortex.v1';
 const SCAN_KEY = 'holocortex.v1.scan';
 const LEGEND_KEY = 'holocortex.v1.legend';
+/* Height kept free for the legend row and fit button on phones. */
+const BOTTOM_RESERVE = 76;
 const NATIVE_LIMIT = 2 * 1024 * 1024;
 const GRAPHIFY_LIMIT = 8 * 1024 * 1024;
 const GRAPHIFY_NS = '7d9b2a4e-5c31-4f08-9a6e-1b0c3d5e7f90';
@@ -142,9 +146,12 @@ const state = {
   sheetMode: 'edit',
   sheetSize: 'normal',
   sheetHistory: false,
+  backPending: false,
+  repushAfterBack: false,
   sheetDrag: null,
   fitPending: true,
   userMoved: false,
+  fitTimers: [],
   pinnedId: null,
   resultsOpen: true,
   suppressHandleClick: false,
@@ -233,9 +240,7 @@ function confirmSave(ok) {
   void button.offsetWidth;
   if (ok) {
     button.classList.add('is-saved');
-    label.textContent = COPY.savedButton;
-    const time = clockTime();
-    setSaveStatus(time ? COPY.savedAt + ' ' + time : COPY.saved, false, 'fresh');
+    label.textContent = COPY.savedAt;
     if (isCoarse() && typeof navigator.vibrate === 'function') {
       try { navigator.vibrate(12); } catch (err) { /* vibration is optional */ }
     }
@@ -244,7 +249,7 @@ function confirmSave(ok) {
   }
   state.savedTimer = window.setTimeout(() => {
     button.classList.remove('is-saved', 'is-failed');
-    label.textContent = 'Save';
+    label.textContent = COPY.save;
   }, 1600);
 }
 
@@ -1313,7 +1318,7 @@ function applyViewOffset(open) {
       clearCameraOffset(camera);
       return;
     }
-    const shift = -Math.round(occupiedTop() / 2);
+    const shift = Math.round((BOTTOM_RESERVE - occupiedTop()) / 2);
     if (Math.abs(shift) <= 1) clearCameraOffset(camera);
     else camera.setViewOffset(fullW, fullH, 0, shift, fullW, fullH);
     return;
@@ -1414,14 +1419,17 @@ function releasePin() {
 /* Fit once right away, then again while the layout settles, unless the
    person has already rotated or zoomed. */
 function scheduleAutoFit() {
+  state.fitTimers.forEach((id) => window.clearTimeout(id));
   state.fitPending = true;
   state.userMoved = false;
   const run = (ms) => {
     if (!state.userMoved && !state.hudOpen) fitView(ms);
   };
-  window.requestAnimationFrame(() => window.requestAnimationFrame(() => run(0)));
-  window.setTimeout(() => run(), 900);
-  window.setTimeout(() => run(), 2200);
+  state.fitTimers = [
+    window.setTimeout(() => run(0), 32),
+    window.setTimeout(() => run(), 900),
+    window.setTimeout(() => run(), 2200)
+  ];
 }
 
 function fitView(ms) {
@@ -1466,7 +1474,7 @@ function fitView(ms) {
   const fullH = Math.max(1, window.innerHeight);
   const compact = isCompact();
   const top = compact ? occupiedTop() : 0;
-  const availH = Math.max(120, fullH - (compact ? top + 72 : 200));
+  const availH = Math.max(120, fullH - (compact ? top + BOTTOM_RESERVE : 200));
   const availW = Math.max(120, fullW - (compact ? 24 : 160));
   const tanHalf = Math.tan((camera.fov * Math.PI) / 360);
   const tanV = tanHalf * (availH / fullH);
@@ -1850,7 +1858,7 @@ function flushSave(explicit) {
     const ok = persist(state.doc);
     if (ok) {
       const time = clockTime();
-      setSaveStatus(time ? COPY.savedAt + ' ' + time : COPY.saved, false, changed ? 'fresh' : '');
+      setSaveStatus(time ? COPY.savedAt + ' ' + time : COPY.saved, false, changed || explicit ? 'fresh' : '');
     } else {
       setSaveStatus(COPY.saveFailed, true);
     }
@@ -2029,6 +2037,12 @@ function bindSheetDrag() {
 /* Android back closes the sheet instead of leaving the page. */
 function pushSheetHistory() {
   if (state.sheetHistory || !isCompact()) return;
+  /* A back() from the last close is still on its way. Pushing now would let
+     that back() pop the new entry and close this sheet, so wait for it. */
+  if (state.backPending) {
+    state.repushAfterBack = true;
+    return;
+  }
   try {
     history.pushState({ hcSheet: true }, '');
     state.sheetHistory = true;
@@ -2036,12 +2050,32 @@ function pushSheetHistory() {
 }
 
 function dropSheetHistory() {
+  state.repushAfterBack = false;
   if (!state.sheetHistory) return;
   state.sheetHistory = false;
-  try { history.back(); } catch (err) { /* history is optional */ }
+  goBackQuietly();
+}
+
+function goBackQuietly() {
+  state.backPending = true;
+  try { history.back(); } catch (err) { state.backPending = false; }
+}
+
+/* After a reload on a sheet entry, step off it so one back press leaves. */
+function dropStaleSheetEntry() {
+  const entry = history.state;
+  if (entry && typeof entry === 'object' && entry.hcSheet) goBackQuietly();
 }
 
 function onPopState() {
+  if (state.backPending) {
+    state.backPending = false;
+    if (state.repushAfterBack) {
+      state.repushAfterBack = false;
+      if (state.hudOpen) pushSheetHistory();
+    }
+    return;
+  }
   if (!state.sheetHistory) return;
   state.sheetHistory = false;
   if (state.dialog) {
@@ -2180,6 +2214,9 @@ function closeHudQuiet() {
   const active = document.activeElement;
   if (active && hud.contains(active) && typeof active.blur === 'function') active.blur();
   setTyping(false);
+  state.sheetDrag = null;
+  hud.classList.remove('is-dragging');
+  hud.style.transform = '';
   setSheetSize('normal');
   releasePin();
   syncSheetClass();
@@ -2191,14 +2228,18 @@ function closeHud() {
   if (!state.hudOpen) return;
   flushSave(false);
   const trigger = state.hudTrigger;
+  const node = getNode(state.selectedId);
   state.selectedId = null;
   setSelectedRing(null);
   closeHudQuiet();
+  /* On desktop the panel offset eases back; on a phone the camera stays put. */
+  if (node && !isCompact()) focusNode(node, state.reduced ? 0 : 200);
   state.hudTrigger = null;
   const visible = trigger && trigger.getClientRects && trigger.getClientRects().length > 0;
-  /* On a phone, focusing a text field would pop the keyboard back up. */
-  if (isCoarse() && (isTextField(trigger) || trigger === graphEl)) return;
-  if (visible && typeof trigger.focus === 'function') trigger.focus({ preventScroll: true });
+  /* On a phone, focusing a text field would pop the keyboard back up, so
+     focus a button instead to keep assistive tech on the page. */
+  const skip = isCoarse() && (isTextField(trigger) || trigger === graphEl);
+  if (!skip && visible && typeof trigger.focus === 'function') trigger.focus({ preventScroll: true });
   else if ($('new-node')) $('new-node').focus({ preventScroll: true });
 }
 
@@ -2714,7 +2755,7 @@ function bindUi() {
       updateTypeUi();
       flushSave(true);
       renderPeek(node);
-      toast(node.status === 'done' ? COPY.done : COPY.open);
+      toast(node.status === 'done' ? COPY.taskDone : COPY.taskReopened);
     });
   }
   if (peekOpenBtn) {
@@ -2741,6 +2782,7 @@ function bindUi() {
     }, 0);
   });
   window.addEventListener('popstate', onPopState);
+  dropStaleSheetEntry();
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', syncViewport);
     window.visualViewport.addEventListener('scroll', syncViewport);
