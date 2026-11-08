@@ -2136,6 +2136,7 @@ function collapseResults() {
   state.resultsOpen = false;
   resultsEl.hidden = true;
   searchEl.setAttribute('aria-expanded', 'false');
+  searchEl.removeAttribute('aria-activedescendant');
   if (document.activeElement === searchEl) searchEl.blur();
 }
 
@@ -2420,8 +2421,11 @@ function renderHits() {
   resultsList.replaceChildren();
   state.hits.forEach((hit, index) => {
     const item = document.createElement('li');
+    item.setAttribute('role', 'none');
     const button = document.createElement('button');
     button.type = 'button';
+    button.id = 'hit-' + index;
+    button.tabIndex = -1;
     button.className = 'hit' + (index === state.activeHit ? ' is-active is-selected' : '');
     button.setAttribute('role', 'option');
     button.setAttribute('aria-selected', index === state.activeHit ? 'true' : 'false');
@@ -2451,7 +2455,12 @@ function renderHits() {
     resultsList.append(item);
   });
   const active = resultsList.querySelector('.is-active');
-  if (active) active.scrollIntoView({ block: 'nearest' });
+  if (active) {
+    active.scrollIntoView({ block: 'nearest' });
+    searchEl.setAttribute('aria-activedescendant', active.id);
+  } else {
+    searchEl.removeAttribute('aria-activedescendant');
+  }
 }
 
 function runSearch() {
@@ -2463,6 +2472,7 @@ function runSearch() {
     state.activeHit = -1;
     resultsEl.hidden = true;
     searchEl.setAttribute('aria-expanded', 'false');
+    searchEl.removeAttribute('aria-activedescendant');
     paintNodes();
     paintLinks();
     return;
