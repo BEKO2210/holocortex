@@ -26,7 +26,12 @@ const COPY = {
   emptyPreview: 'Your preview appears here',
   matchNote: 'Match in note',
   open: 'Open',
-  done: 'Done'
+  done: 'Done',
+  markDone: 'Mark done',
+  reopen: 'Reopen',
+  expandSheet: 'Expand sheet',
+  shrinkSheet: 'Shrink sheet',
+  editSheet: 'Edit node'
 };
 
 const DIALOGS = {
@@ -52,6 +57,7 @@ const TYPE = {
 
 const STORAGE_KEY = 'holocortex.v1';
 const SCAN_KEY = 'holocortex.v1.scan';
+const LEGEND_KEY = 'holocortex.v1.legend';
 const NATIVE_LIMIT = 2 * 1024 * 1024;
 const GRAPHIFY_LIMIT = 8 * 1024 * 1024;
 const GRAPHIFY_NS = '7d9b2a4e-5c31-4f08-9a6e-1b0c3d5e7f90';
@@ -94,10 +100,16 @@ const dlgCancel = $('dlg-cancel');
 const dlgOk = $('dlg-ok');
 const dlgCount = $('dlg-count');
 const fileEl = $('file-input');
-const previewEl = $('preview');
+let previewEl = $('preview');
 const graphEl = $('graph');
 const moreBtn = $('more-btn');
 const moreMenu = $('more-menu');
+const legendEl = $('legend');
+const legendToggle = $('legend-toggle');
+const fitBtn = $('fit-btn');
+const sheetHandle = $('sheet-handle');
+const peekDoneBtn = $('peek-done');
+const peekOpenBtn = $('peek-open');
 const hoverFineQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
 const coarseQuery = window.matchMedia('(pointer: coarse)');
 
@@ -126,6 +138,14 @@ const state = {
   status: 'open',
   reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   sheetMode: 'edit',
+  sheetSize: 'normal',
+  sheetHistory: false,
+  sheetDrag: null,
+  fitPending: true,
+  userMoved: false,
+  pinnedId: null,
+  resultsOpen: true,
+  suppressHandleClick: false,
   editorPanel: 'markdown',
   storageState: 'ok',
   graph: null,
@@ -1227,16 +1247,12 @@ function syncChromeMetrics() {
 function occupiedTop() {
   syncChromeMetrics();
   const bar = document.querySelector('.topbar');
-  let top = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
-  if (document.body.classList.contains('is-sheet')) {
-    const legend = document.querySelector('.legend');
-    if (legend) top = Math.max(top, legend.getBoundingClientRect().bottom);
-  }
-  return top;
+  return bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
 }
 
 function syncSheetClass() {
   document.body.classList.toggle('is-sheet', state.hudOpen && isCompact());
+  document.body.classList.toggle('hud-open', state.hudOpen);
 }
 
 function clearCameraOffset(camera) {
@@ -1250,7 +1266,13 @@ function applyViewOffset(open) {
   const fullW = Math.max(1, window.innerWidth);
   const fullH = Math.max(1, window.innerHeight);
   if (!open) {
-    clearCameraOffset(camera);
+    if (!isCompact()) {
+      clearCameraOffset(camera);
+      return;
+    }
+    const shift = -Math.round(occupiedTop() / 2);
+    if (Math.abs(shift) <= 1) clearCameraOffset(camera);
+    else camera.setViewOffset(fullW, fullH, 0, shift, fullW, fullH);
     return;
   }
   if (isCompact()) {
@@ -1295,23 +1317,128 @@ function focusNode(node, ms = state.reduced ? 0 : 600) {
 }
 
 function placeNode(node) {
-  let x;
-  let y;
-  let z;
-  if (!state.graph) {
-    x = (Math.random() - 0.5) * 80;
-    y = (Math.random() - 0.5) * 40;
-    z = (Math.random() - 0.5) * 80;
-  } else {
-    const camera = state.graph.camera();
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    const pos = camera.position.clone().add(dir.multiplyScalar(150));
-    x = pos.x + (Math.random() - 0.5) * 20;
-    y = pos.y + (Math.random() - 0.5) * 20;
-    z = pos.z + (Math.random() - 0.5) * 20;
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  let count = 0;
+  for (const record of graphNodes.values()) {
+    if (!Number.isFinite(record.x) || !Number.isFinite(record.y) || !Number.isFinite(record.z)) continue;
+    cx += record.x;
+    cy += record.y;
+    cz += record.z;
+    count += 1;
   }
-  layoutSeed.set(node.id, { x, y, z });
+  if (count) {
+    cx /= count;
+    cy /= count;
+    cz /= count;
+  }
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  const radius = count ? 28 : 0;
+  layoutSeed.set(node.id, {
+    x: cx + radius * Math.sin(phi) * Math.cos(theta),
+    y: cy + radius * Math.sin(phi) * Math.sin(theta),
+    z: cz + radius * Math.cos(phi)
+  });
+}
+
+/* Keep a new node still while it is being edited, so the camera stays on it. */
+function pinNode(id) {
+  releasePin();
+  const record = graphNodes.get(id);
+  if (!record || !Number.isFinite(record.x)) return;
+  record.fx = record.x;
+  record.fy = record.y;
+  record.fz = record.z;
+  state.pinnedId = id;
+}
+
+function releasePin() {
+  const id = state.pinnedId;
+  state.pinnedId = null;
+  if (!id) return;
+  const record = graphNodes.get(id);
+  if (!record) return;
+  delete record.fx;
+  delete record.fy;
+  delete record.fz;
+}
+
+/* Frame every node from the current viewing direction, inside the area that
+   the top bar, legend, and fit button leave free. Tighter than zoomToFit,
+   which always aims at the origin and pads by the largest axis. */
+/* Fit once right away, then again while the layout settles, unless the
+   person has already rotated or zoomed. */
+function scheduleAutoFit() {
+  state.fitPending = true;
+  state.userMoved = false;
+  const run = (ms) => {
+    if (!state.userMoved && !state.hudOpen) fitView(ms);
+  };
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => run(0)));
+  window.setTimeout(() => run(), 900);
+  window.setTimeout(() => run(), 2200);
+}
+
+function fitView(ms) {
+  const graph = state.graph;
+  if (!graph) return;
+  const points = [];
+  state.doc.nodes.forEach((node) => {
+    const record = graphNodes.get(node.id);
+    if (record && Number.isFinite(record.x) && Number.isFinite(record.y) && Number.isFinite(record.z)) points.push(record);
+  });
+  if (!points.length) return;
+  applyViewOffset(Boolean(state.hudOpen));
+  const camera = graph.camera();
+  const controls = graph.controls();
+  const target = controls && controls.target ? controls.target.clone() : new THREE.Vector3();
+  const back = camera.position.clone().sub(target);
+  if (back.lengthSq() < 1e-6) back.set(0, 0, 1);
+  back.normalize();
+  const right = new THREE.Vector3().crossVectors(camera.up, back);
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+  right.normalize();
+  const up = new THREE.Vector3().crossVectors(back, right).normalize();
+  const v = new THREE.Vector3();
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  const proj = points.map((p) => {
+    v.set(p.x, p.y, p.z);
+    const q = { x: v.dot(right), y: v.dot(up), z: v.dot(back) };
+    minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x);
+    minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y);
+    minZ = Math.min(minZ, q.z); maxZ = Math.max(maxZ, q.z);
+    return q;
+  });
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const fullW = Math.max(1, window.innerWidth);
+  const fullH = Math.max(1, window.innerHeight);
+  const compact = isCompact();
+  const top = compact ? occupiedTop() : 0;
+  const availH = Math.max(120, fullH - (compact ? top + 72 : 200));
+  const availW = Math.max(120, fullW - (compact ? 24 : 160));
+  const tanHalf = Math.tan((camera.fov * Math.PI) / 360);
+  const tanV = tanHalf * (availH / fullH);
+  const tanH = tanHalf * (fullW / fullH) * (availW / fullW);
+  /* Name plates sit below a node and are wider than it. */
+  const marginX = 14;
+  const marginY = 11;
+  let dist = 60;
+  proj.forEach((q) => {
+    const need = Math.max((Math.abs(q.x - cx) + marginX) / tanH, (Math.abs(q.y - cy) + marginY) / tanV);
+    dist = Math.max(dist, need + (q.z - cz));
+  });
+  const look = right.clone().multiplyScalar(cx).add(up.clone().multiplyScalar(cy)).add(back.clone().multiplyScalar(cz));
+  const pos = look.clone().add(back.clone().multiplyScalar(dist));
+  graph.cameraPosition({ x: pos.x, y: pos.y, z: pos.z }, { x: look.x, y: look.y, z: look.z }, ms == null ? (state.reduced ? 0 : 600) : ms);
 }
 
 function showTooltip(node) {
@@ -1508,9 +1635,17 @@ function renderPreviewNow() {
     }
     if (!inner.trim()) inner = '<p class="empty">' + COPY.emptyPreview + '</p>';
   }
-  previewEl.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8">'
     + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:;">'
     + '<style>' + PREVIEW_CSS + '</style></head><body>' + inner + '</body></html>';
+  /* Changing srcdoc on a live frame adds a session history entry, so the
+     back button would step through old previews. A fresh frame does not. */
+  const frame = previewEl.cloneNode(false);
+  frame.removeAttribute('srcdoc');
+  frame.setAttribute('sandbox', '');
+  frame.srcdoc = html;
+  previewEl.replaceWith(frame);
+  previewEl = frame;
 }
 
 function schedulePreview() {
@@ -1684,10 +1819,34 @@ function scheduleSave() {
   state.saveTimer = window.setTimeout(() => flushSave(false), 300);
 }
 
+function plainExcerpt(markdown) {
+  return String(markdown || '')
+    .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+\[[ xX]\]\s+|[-*+]\s+|\d+\.\s+)/gm, '')
+    .replace(/(\*\*|~~|\*)(\S[\s\S]*?)\1/g, '$2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 400);
+}
+
 function renderPeek(node) {
   const title = $('peek-title');
   const status = $('peek-status');
   const url = $('peek-url');
+  const body = $('peek-body');
+  if (body) {
+    const text = plainExcerpt(node.body);
+    body.hidden = !text;
+    body.textContent = text;
+  }
+  if (peekDoneBtn) {
+    peekDoneBtn.hidden = node.type !== 'task';
+    peekDoneBtn.textContent = node.status === 'done' ? COPY.reopen : COPY.markDone;
+  }
+  if (peekOpenBtn) peekOpenBtn.hidden = !(node.type === 'link' && isHttpUrl(node.url));
   if (title) title.textContent = (node.title || '').trim() || COPY.untitled;
   if (status) {
     if (node.type === 'task') {
@@ -1730,6 +1889,165 @@ function applySheetMode(mode) {
   else delete hud.dataset.mode;
   if (state.sheetMode !== 'edit') setFormatting(false);
   syncSheetClass();
+  syncHandleLabel();
+}
+
+function setSheetSize(size) {
+  state.sheetSize = size === 'full' ? 'full' : 'normal';
+  if (state.sheetSize === 'full' && isCompact()) hud.dataset.size = 'full';
+  else delete hud.dataset.size;
+  syncHandleLabel();
+}
+
+function syncHandleLabel() {
+  if (!sheetHandle) return;
+  let label = COPY.expandSheet;
+  if (state.sheetMode === 'peek') label = COPY.editSheet;
+  else if (state.sheetSize === 'full') label = COPY.shrinkSheet;
+  sheetHandle.setAttribute('aria-label', label);
+  sheetHandle.title = label;
+}
+
+/* dir > 0 grows the sheet one step, dir < 0 shrinks or closes it. */
+function sheetStep(dir) {
+  if (!state.hudOpen) return;
+  if (dir > 0) {
+    if (state.sheetMode === 'peek') enterEdit();
+    else setSheetSize('full');
+  } else if (state.sheetSize === 'full') {
+    setSheetSize('normal');
+  } else {
+    closeHud();
+    return;
+  }
+  applyViewOffset(true);
+}
+
+function toggleSheetSize() {
+  if (!state.hudOpen) return;
+  if (state.sheetMode === 'peek') enterEdit();
+  else setSheetSize(state.sheetSize === 'full' ? 'normal' : 'full');
+  applyViewOffset(true);
+}
+
+function bindSheetDrag() {
+  if (!sheetHandle) return;
+  sheetHandle.addEventListener('pointerdown', (event) => {
+    state.suppressHandleClick = false;
+    if (!isCompact() || !state.hudOpen) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    state.sheetDrag = { id: event.pointerId, y: event.clientY, t: performance.now(), dy: 0, moved: false };
+    try { sheetHandle.setPointerCapture(event.pointerId); } catch (err) { /* capture is optional */ }
+    hud.classList.add('is-dragging');
+  });
+  sheetHandle.addEventListener('pointermove', (event) => {
+    const drag = state.sheetDrag;
+    if (!drag || drag.id !== event.pointerId) return;
+    drag.dy = event.clientY - drag.y;
+    if (Math.abs(drag.dy) > 6) drag.moved = true;
+    const shown = drag.dy > 0 ? drag.dy : drag.dy * 0.3;
+    hud.style.transform = 'translateY(' + Math.round(shown) + 'px)';
+  });
+  const end = (event) => {
+    const drag = state.sheetDrag;
+    if (!drag || drag.id !== event.pointerId) return;
+    state.sheetDrag = null;
+    hud.classList.remove('is-dragging');
+    hud.style.transform = '';
+    if (event.type === 'pointercancel' || !drag.moved) return;
+    state.suppressHandleClick = true;
+    const speed = drag.dy / Math.max(1, performance.now() - drag.t);
+    if (drag.dy > 80 || (drag.dy > 24 && speed > 0.45)) sheetStep(-1);
+    else if (drag.dy < -40 || (drag.dy < -16 && speed < -0.45)) sheetStep(1);
+  };
+  sheetHandle.addEventListener('pointerup', end);
+  sheetHandle.addEventListener('pointercancel', end);
+  sheetHandle.addEventListener('click', () => {
+    if (state.suppressHandleClick) {
+      state.suppressHandleClick = false;
+      return;
+    }
+    toggleSheetSize();
+  });
+}
+
+/* Android back closes the sheet instead of leaving the page. */
+function pushSheetHistory() {
+  if (state.sheetHistory || !isCompact()) return;
+  try {
+    history.pushState({ hcSheet: true }, '');
+    state.sheetHistory = true;
+  } catch (err) { /* history is optional */ }
+}
+
+function dropSheetHistory() {
+  if (!state.sheetHistory) return;
+  state.sheetHistory = false;
+  try { history.back(); } catch (err) { /* history is optional */ }
+}
+
+function onPopState() {
+  if (!state.sheetHistory) return;
+  state.sheetHistory = false;
+  if (state.dialog) {
+    closeDialog(false);
+    if (state.hudOpen) pushSheetHistory();
+    return;
+  }
+  if (state.hudOpen) closeHud();
+}
+
+function isTextField(el) {
+  if (!el || !el.tagName) return false;
+  if (el.tagName === 'TEXTAREA') return true;
+  return el.tagName === 'INPUT' && /^(text|search|url|email)$/i.test(el.type || 'text');
+}
+
+function setTyping(on) {
+  const next = Boolean(on) && isCompact() && isCoarse() && state.hudOpen;
+  if (document.body.classList.contains('is-typing') === next) return;
+  document.body.classList.toggle('is-typing', next);
+  if (next) {
+    window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && hud.contains(active) && typeof active.scrollIntoView === 'function') {
+        active.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  }
+}
+
+function syncViewport() {
+  const vv = window.visualViewport;
+  if (vv && Math.abs((vv.scale || 1) - 1) > 0.01) return;
+  const height = vv ? vv.height : window.innerHeight;
+  const kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+  const root = document.documentElement.style;
+  root.setProperty('--app-h', Math.round(height) + 'px');
+  root.setProperty('--kb', kb + 'px');
+}
+
+function setLegendCollapsed(collapsed, remember) {
+  if (!legendEl || !legendToggle) return;
+  legendEl.classList.toggle('is-collapsed', Boolean(collapsed));
+  legendToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  legendToggle.title = collapsed ? 'Show node types' : 'Hide node types';
+  if (!remember) return;
+  try { localStorage.setItem(LEGEND_KEY, collapsed ? 'collapsed' : 'open'); } catch (err) { /* keep it for this visit */ }
+}
+
+function initLegend() {
+  let pref = null;
+  try { pref = localStorage.getItem(LEGEND_KEY); } catch (err) { pref = null; }
+  setLegendCollapsed(pref === 'collapsed', false);
+}
+
+function collapseResults() {
+  if (!isCompact()) return;
+  state.resultsOpen = false;
+  resultsEl.hidden = true;
+  searchEl.setAttribute('aria-expanded', 'false');
+  if (document.activeElement === searchEl) searchEl.blur();
 }
 
 function focusTitleFor(node) {
@@ -1796,6 +2114,7 @@ function openHud() {
   hud.setAttribute('aria-hidden', 'false');
   setMoreOpen(false);
   syncSheetClass();
+  pushSheetHistory();
 }
 
 function closeHudQuiet() {
@@ -1803,23 +2122,29 @@ function closeHudQuiet() {
   hud.classList.remove('is-open');
   hud.inert = true;
   hud.setAttribute('aria-hidden', 'true');
+  const active = document.activeElement;
+  if (active && hud.contains(active) && typeof active.blur === 'function') active.blur();
+  setTyping(false);
+  setSheetSize('normal');
+  releasePin();
   syncSheetClass();
-  if (state.graph) clearCameraOffset(state.graph.camera());
+  dropSheetHistory();
+  applyViewOffset(false);
 }
 
 function closeHud() {
   if (!state.hudOpen) return;
   flushSave(false);
   const trigger = state.hudTrigger;
-  const node = getNode(state.selectedId);
   state.selectedId = null;
   setSelectedRing(null);
   closeHudQuiet();
-  if (node) focusNode(node, state.reduced ? 0 : 200);
   state.hudTrigger = null;
   const visible = trigger && trigger.getClientRects && trigger.getClientRects().length > 0;
-  if (visible && typeof trigger.focus === 'function') trigger.focus();
-  else if ($('new-node')) $('new-node').focus();
+  /* On a phone, focusing a text field would pop the keyboard back up. */
+  if (isCoarse() && (isTextField(trigger) || trigger === graphEl)) return;
+  if (visible && typeof trigger.focus === 'function') trigger.focus({ preventScroll: true });
+  else if ($('new-node')) $('new-node').focus({ preventScroll: true });
 }
 
 function selectNode(id, trigger, pulse, options) {
@@ -1830,6 +2155,7 @@ function selectNode(id, trigger, pulse, options) {
   if (!node) return;
   const same = state.hudOpen && state.selectedId === id;
   if (state.hudOpen && state.selectedId) flushSave(false);
+  if (state.pinnedId && state.pinnedId !== id) releasePin();
   state.selectedId = id;
   state.hudTrigger = trigger || document.activeElement;
   let mode = 'edit';
@@ -1869,13 +2195,14 @@ function createNode(trigger) {
   state.doc.nodes.push(node);
   const ok = persist(state.doc);
   syncGraph();
+  pinNode(node.id);
   if (state.query.trim()) runSearch();
   selectNode(node.id, trigger || $('new-node'), true, { edit: true });
   if (!ok) {
     setSaveStatus(COPY.saveFailed, true);
     toast(COPY.saveFailed);
   }
-  toast(COPY.created);
+  if (!isCompact()) toast(COPY.created);
   updateEmpty();
 }
 
@@ -1911,6 +2238,7 @@ function resetNetwork() {
   clearSearch();
   const ok = persist(state.doc);
   syncGraph();
+  scheduleAutoFit();
   updateEmpty();
   if (!ok) toast(COPY.saveFailed);
 }
@@ -2019,7 +2347,10 @@ function renderHits() {
       note.textContent = COPY.matchNote;
       button.append(note);
     }
-    button.addEventListener('click', () => selectNode(hit.node.id, button, false));
+    button.addEventListener('click', () => {
+      selectNode(hit.node.id, button, false);
+      collapseResults();
+    });
     item.append(button);
     resultsList.append(item);
   });
@@ -2051,8 +2382,8 @@ function runSearch() {
   state.hitIds = new Set(hits.map((hit) => hit.node.id));
   if (state.activeHit >= hits.length) state.activeHit = hits.length ? 0 : -1;
   if (state.activeHit < 0 && hits.length) state.activeHit = 0;
-  resultsEl.hidden = false;
-  searchEl.setAttribute('aria-expanded', 'true');
+  resultsEl.hidden = !state.resultsOpen;
+  searchEl.setAttribute('aria-expanded', state.resultsOpen ? 'true' : 'false');
   renderHits();
   paintNodes();
   paintLinks();
@@ -2157,6 +2488,7 @@ function applyImport() {
   state.doc = doc;
   clearSearch();
   syncGraph();
+  scheduleAutoFit();
   updateEmpty();
   toast('Imported ' + countLabel(doc.nodes.length, 'node', 'nodes'));
 }
@@ -2270,7 +2602,10 @@ function onKeyDown(event) {
       event.preventDefault();
       const hit = state.hits[Math.max(0, state.activeHit)];
       const button = resultsList.querySelector('.is-active') || resultsList.querySelector('button');
-      if (hit) selectNode(hit.node.id, button || searchEl, false);
+      if (hit) {
+        selectNode(hit.node.id, button || searchEl, false);
+        collapseResults();
+      }
     }
   }
 }
@@ -2316,6 +2651,48 @@ function bindUi() {
   $('empty-new').addEventListener('click', () => createNode($('empty-new')));
   $('close-hud').addEventListener('click', closeHud);
   $('peek-edit').addEventListener('click', enterEdit);
+  if (peekDoneBtn) {
+    peekDoneBtn.addEventListener('click', () => {
+      const node = getNode(state.selectedId);
+      if (!node || node.type !== 'task') return;
+      state.status = node.status === 'done' ? 'open' : 'done';
+      updateTypeUi();
+      flushSave(true);
+      renderPeek(node);
+      toast(node.status === 'done' ? COPY.done : COPY.open);
+    });
+  }
+  if (peekOpenBtn) {
+    peekOpenBtn.addEventListener('click', () => {
+      const node = getNode(state.selectedId);
+      if (!node || !isHttpUrl(node.url)) return;
+      window.open(node.url.trim(), '_blank', 'noopener,noreferrer');
+    });
+  }
+  if (legendToggle) {
+    legendToggle.addEventListener('click', () => {
+      setLegendCollapsed(!legendEl.classList.contains('is-collapsed'), true);
+    });
+  }
+  if (fitBtn) fitBtn.addEventListener('click', () => fitView());
+  bindSheetDrag();
+  hud.addEventListener('focusin', (event) => {
+    if (isTextField(event.target)) setTyping(true);
+  });
+  hud.addEventListener('focusout', () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      setTyping(Boolean(active && hud.contains(active) && isTextField(active)));
+    }, 0);
+  });
+  window.addEventListener('popstate', onPopState);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncViewport);
+    window.visualViewport.addEventListener('scroll', syncViewport);
+  }
+  window.addEventListener('resize', syncViewport);
+  syncViewport();
+  initLegend();
   $('save-btn').addEventListener('click', () => flushSave(true));
   $('format-toggle').addEventListener('click', () => {
     const toggle = $('format-toggle');
@@ -2356,8 +2733,15 @@ function bindUi() {
     clearSearch();
     searchEl.focus();
   });
-  searchEl.addEventListener('focus', () => setMoreOpen(false));
+  searchEl.addEventListener('focus', () => {
+    setMoreOpen(false);
+    if (!state.resultsOpen) {
+      state.resultsOpen = true;
+      if (state.query.trim()) runSearch();
+    }
+  });
   searchEl.addEventListener('input', () => {
+    state.resultsOpen = true;
     state.query = searchEl.value;
     state.activeHit = 0;
     clearBtn.hidden = state.query.length === 0;
@@ -2437,6 +2821,8 @@ function bindUi() {
     const graph = state.graph;
     if (state.hudOpen && !isCompact()) delete hud.dataset.mode;
     else if (state.hudOpen && isCompact()) hud.dataset.mode = state.sheetMode || 'edit';
+    setSheetSize(state.sheetSize);
+    if (!isCompact()) setTyping(false);
     syncSheetClass();
     syncChromeMetrics();
     if (!graph) return;
@@ -2497,7 +2883,13 @@ async function boot() {
       .onNodeClick((node) => { if (node) selectNode(node.id, graphEl, false, { fromGraph: true }); })
       .onBackgroundClick(() => {
         setMoreOpen(false);
+        collapseResults();
         if (state.hudOpen) closeHud();
+      })
+      .onEngineStop(() => {
+        if (!state.fitPending) return;
+        state.fitPending = false;
+        if (!state.hudOpen && !state.userMoved) fitView();
       })
       .onNodeHover((node) => {
         if (!canHoverFine() || isCoarse()) {
@@ -2530,6 +2922,11 @@ async function boot() {
   if (canvas) canvas.style.touchAction = 'none';
   syncGraph();
   graph.cameraPosition({ x: 0, y: 36, z: 230 });
+  applyViewOffset(false);
+  if (controls && typeof controls.addEventListener === 'function') {
+    controls.addEventListener('start', () => { state.userMoved = true; });
+  }
+  scheduleAutoFit();
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
       if (state.graph) refreshPlateFont();
