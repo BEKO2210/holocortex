@@ -23,7 +23,7 @@ Open `http://localhost:8000/`.
 
 ## Mobile
 
-Layout is mobile-first. Under about 900px the editor is a bottom sheet, the top bar keeps the wordmark, and Search, New node, Import, Export, and Reset are icon buttons with those names. Touch targets are at least 44px. The graph stays visible above the sheet, and the legend is hidden while the sheet is open so the two do not cover each other. The focused node is kept out from under the top bar and the sheet. Pinch and drag on the graph orbit and zoom the scene; those touches do not zoom the page. From about 900px up, the editor is the 432px panel on the right.
+Layout is mobile-first. Under about 900px the top bar keeps the wordmark, a search field, New, and More. The first tap on a node opens a short peek; Edit opens the note. Touch targets are at least 44px. The graph stays visible above the sheet. One finger rotates the graph, and two fingers pinch or pan. Those touches do not zoom the page. From about 900px up, the editor is the 432px panel on the right.
 
 Safe areas use `viewport-fit=cover` and `env(safe-area-inset-*)`.
 
