@@ -23,9 +23,22 @@ Open `http://localhost:8000/`.
 
 ## Mobile
 
-Layout is mobile-first. Under about 900px the top bar keeps the wordmark, a search field, New, and More. The first tap on a node opens a short peek; Edit opens the note. Touch targets are at least 44px. The graph stays visible above the sheet. One finger rotates the graph, and two fingers pinch or pan. Those touches do not zoom the page. From about 900px up, the editor is the 432px panel on the right.
+Layout is mobile-first. Under about 900px the top bar keeps the wordmark, a search field, New, and More. Touch targets are at least 44px. One finger rotates the graph, and two fingers pinch or pan. Those touches do not zoom the page. From about 900px up, the editor is the 432px panel on the right.
 
-Safe areas use `viewport-fit=cover` and `env(safe-area-inset-*)`.
+- The view fits the whole network into the free space below the top bar when the page loads, and again after an import or reset, unless you have already rotated or zoomed. The square button in the lower right fits it again at any time.
+- The node type legend in the lower left collapses to a single row with four color dots. Tap it to open or close it. The choice is kept in `localStorage` under `holocortex.v1.legend`. The legend and the fit button are hidden while a sheet is open.
+- The first tap on a node opens a short peek with the title, status, URL, tags, and the first lines of the note. Peek has Edit, and also Mark done or Reopen for a task and Open link for a link.
+- The sheet has a grab handle. Drag it up to go from peek to edit, and from edit to full height. Drag it down to shrink a full sheet or to close it. A tap on the handle does the same as one step up, or toggles full height in edit mode.
+- The Android back button, or a back swipe, closes the open sheet instead of leaving the page.
+- While you type in the sheet on a touch device, it fills the visible area above the on-screen keyboard. Text fields use a 16px font so iOS Safari does not zoom the page on focus.
+- Picking a search result closes the result list and the keyboard. Focus the search field to see the list again.
+- A new node is placed next to the existing network and held in place while its sheet is open.
+- Save, and Ctrl or Cmd+S, turn the button into a mint check for a moment and show the time of the save next to it. On a phone with vibration support there is also a short tick. A failed save shakes the button red and shows an error. Edits are also saved automatically while you type.
+- Search results and the peek show the note as plain text. Markdown symbols are left out, and line breaks become a middle dot.
+
+Safe areas use `viewport-fit=cover` and `env(safe-area-inset-*)`. The viewport sets `interactive-widget=resizes-content`, and the sheet also follows `visualViewport`, so it stays above the keyboard.
+
+`manifest.webmanifest` and the files in `icons/` let a browser add the site to the home screen as a standalone app. There is no service worker, so this does not make the app work offline.
 
 ## GitHub Pages
 
@@ -47,7 +60,7 @@ A Graphify `graph.json` file is a separate import. It is recognized when `graph.
 
 Data stays in `localStorage` on this device. There is no cloud sync. Use Export for a backup named `holocortex-YYYY-MM-DD.json`. Import replaces the whole network after confirmation. Native holocortex JSON is limited to 2 MB. Graphify JSON is limited to 8 MB.
 
-Reset writes an empty document to the same key. The ten demo nodes are created only when that key is missing, so they do not return after a reset or a reload. Other `localStorage` keys are left untouched.
+Reset writes an empty document to the same key. The ten demo nodes are created only when that key is missing, so they do not return after a reset or a reload. Other `localStorage` keys, such as the legend state, are left untouched.
 
 ## Privacy
 
@@ -67,7 +80,7 @@ Import reads a JSON file from this computer. It does not merge. You confirm repl
 
 ## Limitations
 
-Marked does not sanitize Markdown. The preview is a sandboxed frame with no scripts, no same-origin access, and the content security policy `default-src 'none'; style-src 'unsafe-inline'; img-src data:`. Raw HTML is shown as text. Remote images are not requested; the alt text is shown instead. Preview links do not navigate. This is not a complete sanitizer, and snippet text is never executed. Open link is a separate action and accepts only `http://` and `https://` URLs.
+Marked does not sanitize Markdown. The preview is a sandboxed frame, replaced by a new frame on each update so the back button does not step through old previews. It has no scripts, no same-origin access, and the content security policy `default-src 'none'; style-src 'unsafe-inline'; img-src data:`. Raw HTML is shown as text. Remote images are not requested; the alt text is shown instead. Preview links do not navigate. This is not a complete sanitizer, and snippet text is never executed. Open link is a separate action and accepts only `http://` and `https://` URLs.
 
 `localStorage` is per origin and can run out of space or be unavailable in private browsing. A failed write is reported. Export a backup if a write fails. A stored document that cannot be read is not replaced with the demo; import a backup or reset.
 

@@ -3,10 +3,17 @@
 <head>
 <meta charset="utf-8">
 <!-- Copyright 2026 Belkis Aslani -->
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#030712">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="holocortex">
 <title>holocortex</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap">
 <script src="https://cdn.tailwindcss.com/3.4.17" data-dep="tailwind"></script>
@@ -59,7 +66,7 @@ tailwind.config = {
     <div class="search-block" id="search-block">
       <label class="label" for="search">Search</label>
       <div class="search-field">
-        <input id="search" class="field" type="text" placeholder="Search titles, tags, and notes…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="results-list" aria-autocomplete="list">
+        <input id="search" class="field" type="search" enterkeyhint="search" placeholder="Search titles, tags, and notes…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="results-list" aria-autocomplete="list">
         <button type="button" id="clear-search" class="icon-btn clear-btn" title="Clear search" aria-label="Clear search" hidden><i data-lucide="x"></i></button>
       </div>
       <div id="results" class="results glass corners" hidden>
@@ -85,18 +92,25 @@ tailwind.config = {
     </div>
   </header>
 
-  <aside class="legend glass corners" aria-label="Node types">
-    <div class="label">Node types</div>
-    <ul>
-      <li class="type-thought"><i data-lucide="brain"></i><span>Thought</span></li>
-      <li class="type-task"><i data-lucide="circle-check"></i><span>Task</span></li>
-      <li class="type-link"><i data-lucide="link"></i><span>Link</span></li>
-      <li class="type-snippet"><i data-lucide="code-2"></i><span>Snippet</span></li>
-    </ul>
-    <p class="help help-desktop">Drag to orbit · Scroll to zoom · Click to edit</p>
-    <p class="help help-touch">Drag to rotate · Pinch to zoom · Tap to select</p>
-    <p class="help help-sheet">Drag to rotate · Pinch to zoom</p>
+  <aside id="legend" class="legend glass corners" aria-label="Node types">
+    <button type="button" id="legend-toggle" class="legend-toggle" aria-expanded="true" aria-controls="legend-body">
+      <span class="label">Node types</span>
+      <span class="legend-dots" aria-hidden="true"><span class="dot dot-thought"></span><span class="dot dot-task"></span><span class="dot dot-link"></span><span class="dot dot-snippet"></span></span>
+      <span class="legend-chevron" aria-hidden="true"><i data-lucide="chevron-down"></i></span>
+    </button>
+    <div id="legend-body" class="legend-body">
+      <ul>
+        <li class="type-thought"><i data-lucide="brain"></i><span>Thought</span></li>
+        <li class="type-task"><i data-lucide="circle-check"></i><span>Task</span></li>
+        <li class="type-link"><i data-lucide="link"></i><span>Link</span></li>
+        <li class="type-snippet"><i data-lucide="code-2"></i><span>Snippet</span></li>
+      </ul>
+      <p class="help help-desktop">Drag to orbit · Scroll to zoom · Click to edit</p>
+      <p class="help help-touch">Drag to rotate · Pinch to zoom · Tap to select</p>
+    </div>
   </aside>
+
+  <button type="button" id="fit-btn" class="fab glass" title="Fit network to screen" aria-label="Fit network to screen"><i data-lucide="scan"></i></button>
 
   <section id="empty" class="empty glass corners" hidden>
     <h2>Your network is empty</h2>
@@ -108,7 +122,7 @@ tailwind.config = {
   <div id="loading" class="loading glass">Loading network…</div>
 
   <aside id="hud" class="hud glass corners" inert aria-hidden="true">
-    <div class="sheet-handle" aria-hidden="true"></div>
+    <button type="button" id="sheet-handle" class="sheet-handle" aria-label="Expand sheet"><span class="sheet-grip" aria-hidden="true"></span></button>
     <div class="hud-body">
     <div class="hud-scroll">
       <div class="hud-head">
@@ -122,6 +136,7 @@ tailwind.config = {
       </div>
       <p id="peek-status" class="peek-line peek-only" hidden></p>
       <p id="peek-url" class="peek-line peek-only" hidden></p>
+      <p id="peek-body" class="peek-body peek-only" hidden></p>
       <div class="stack edit-only">
         <label class="label" for="type">Type</label>
         <select id="type" class="select">
@@ -180,7 +195,9 @@ tailwind.config = {
     </div>
     <footer class="hud-foot">
       <button type="button" id="peek-edit" class="btn primary peek-only">Edit</button>
-      <button type="button" id="save-btn" class="btn edit-only">Save</button>
+      <button type="button" id="peek-done" class="btn peek-only" hidden>Mark done</button>
+      <button type="button" id="peek-open" class="btn peek-only" hidden>Open link</button>
+      <button type="button" id="save-btn" class="btn save-btn edit-only"><span class="save-icon" aria-hidden="true"><i data-lucide="check"></i></span><span class="save-label">Save</span></button>
       <span id="save-state" class="save-state edit-only" role="status"></span>
       <button type="button" id="delete-btn" class="btn delete edit-only">Delete</button>
     </footer>
